@@ -23,6 +23,8 @@ class CartWatchService : AccessibilityService() {
  private var lastAlert=0L
  private var busyScreenshot=false
  private var lastSeatAttempt=0L
+ private var pendingSeat:Pair<Int,Int>?=null
+ private var pendingSeatTime=0L
  private var categoryAttempts=mutableMapOf<Int,Long>()
  private var blockAttempts=mutableMapOf<String,Long>()
  private var lastStatus="Bekleniyor"
@@ -83,11 +85,14 @@ class CartWatchService : AccessibilityService() {
   val qty=cfg.getInt("quantity",1).coerceIn(1,4)
   val selected=Regex("koltuk listesi\\s*\\(\\s*(\\d+)\\s*/\\s*(\\d+)\\s*\\)",RegexOption.IGNORE_CASE).find(all)
   if(selected!=null&&selected.groupValues[1].toIntOrNull()==qty){
+   pendingSeat=null
    status("Koltuk seçildi, devam ediliyor")
    nodes.firstOrNull{label(it).equals("Devam Et",true)}?.let{click(it)}
    return
   }
   if(all.contains("koltuk listesi")&&all.contains("saha")){
+   if(pendingSeat!=null && System.currentTimeMillis()-pendingSeatTime<7000){status("Koltuk dokunuşunun sonucu bekleniyor");return}
+   pendingSeat=null
    status("Boş koltuk görüntüden aranıyor")
    if(qty==1&&System.currentTimeMillis()-lastSeatAttempt>3500){
     lastSeatAttempt=System.currentTimeMillis();scanSeatImage(nodes)
@@ -171,30 +176,53 @@ class CartWatchService : AccessibilityService() {
   }catch(e:Exception){busyScreenshot=false;status("Görüntü izni veya erişim hatası")}
  }
  private fun findSeat(bitmap:Bitmap,field:Rect,bottom:Rect){
-  // Look only above the Saha label and below the screen title, never at arbitrary white UI controls.
+  // Detect compact, white, bordered square seats. Ignore the white page background.
   val w=bitmap.width;val h=bitmap.height
-  val top=(h*0.22).toInt().coerceAtLeast(0)
-  val end=(field.top-18).coerceIn(top,h)
-  val left=(w*0.09).toInt();val right=(w*0.90).toInt()
-  if(end<=top+80){status("Koltuk alanı bulunamadı");return}
-  // White seats are small, square, surrounded by black occupied seats.
-  for(y in top+10 until end-10 step 3){
-   for(x in left+10 until right-10 step 3){
-    val c=bitmap.getPixel(x,y)
-    if(Color.red(c)<235||Color.green(c)<235||Color.blue(c)<235)continue
-    var dark=0;var bright=0
-    for(dy in -11..11 step 5)for(dx in -11..11 step 5){
-     val px=bitmap.getPixel(x+dx,y+dy)
-     val lum=(Color.red(px)+Color.green(px)+Color.blue(px))/3
-     if(lum<70)dark++ else if(lum>235)bright++
-    }
-    // A bright center with a substantial dark grid around it.
-    if(dark>=9&&bright in 3..16){
-     status("Beyaz koltuk adayı: $x,$y")
-     tap(x.toFloat(),y.toFloat());return
+  val left=(w*0.10).toInt().coerceAtLeast(14)
+  val right=(w*0.90).toInt().coerceAtMost(w-14)
+  val top=(h*0.20).toInt().coerceAtLeast(14)
+  val end=(field.top-25).coerceAtMost(bottom.top-80).coerceAtMost(h-14)
+  if(end<=top+60){status("Koltuk alanı belirlenemedi");return}
+  fun white(x:Int,y:Int):Boolean {
+   if(x !in 0 until w || y !in 0 until h)return false
+   val c=bitmap.getPixel(x,y)
+   return Color.red(c)>225 && Color.green(c)>225 && Color.blue(c)>225
+  }
+  fun black(x:Int,y:Int):Boolean {
+   if(x !in 0 until w || y !in 0 until h)return false
+   val c=bitmap.getPixel(x,y)
+   return Color.red(c)<85 && Color.green(c)<85 && Color.blue(c)<85
+  }
+  // Seat widths vary with device resolution and map zoom. Try a range of scales.
+  val scales=listOf(6,8,10,12,15,18,22)
+  var candidates=0
+  for(size in scales){
+   for(y in top+size until end-size step 3){
+    for(x in left+size until right-size step 3){
+     if(!white(x,y))continue
+     val half=size/2
+     // The candidate must be a coherent bright square, not a tiny gap in the black grid.
+     val inner=listOf(-half/2 to -half/2,half/2 to -half/2,-half/2 to half/2,half/2 to half/2)
+     if(inner.count{(dx,dy)->white(x+dx,y+dy)}<3)continue
+     // Dark occupied seats to the left or right, and above or below.
+     val offsets=listOf(size+3,size+5,size+8)
+     val horizontal=offsets.any{black(x-it,y)||black(x+it,y)}
+     val vertical=offsets.any{black(x,y-it)||black(x,y+it)}
+     if(!horizontal||!vertical)continue
+     // Reject broad blank patches: white cannot extend far beyond the seat.
+     if(white(x-size-3,y)&&white(x+size+3,y))continue
+     if(white(x,y-size-3)&&white(x,y+size+3))continue
+     candidates++
+     val d=getSharedPreferences("passo_diagnostic",MODE_PRIVATE)
+     d.edit().putInt("visualSeatCandidates",candidates).putString("seatCoordinate","$x,$y").apply()
+     pendingSeat=x to y;pendingSeatTime=System.currentTimeMillis()
+     status("Boş koltuk adayı seçiliyor: $x,$y")
+     if(!tap(x.toFloat(),y.toFloat())){pendingSeat=null;status("Koltuk dokunuşu gönderilemedi")}
+     return
     }
    }
   }
-  status("Görüntüde güvenilir boş koltuk bulunamadı")
+  getSharedPreferences("passo_diagnostic",MODE_PRIVATE).edit().putInt("visualSeatCandidates",0).apply()
+  status("Görselde doğrulanabilir boş koltuk bulunamadı; rastgele dokunulmadı")
  }
 }

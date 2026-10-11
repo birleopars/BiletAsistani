@@ -137,7 +137,7 @@ class MainActivity : Activity() {
   title(root,"SON PASSO EKRANI")
   val d=getSharedPreferences("passo_diagnostic",MODE_PRIVATE)
   val c=card(root)
-  c.addView(text(if(d.getLong("lastSeen",0L)==0L)"Henüz Passo ekranı analiz edilmedi." else "Ekran öğeleri: ${d.getInt("nodeCount",0)}\nTıklanabilir öğeler: ${d.getInt("clickableCount",0)}\nSon işlem: ${d.getString("stage","Bekleniyor")}\nKoltuk etiketli öğeler: ${d.getInt("seatCandidates",0)}\n11. kategori etiketi: ${d.getBoolean("category11Visible",false)}\n10. kategori etiketi: ${d.getBoolean("category10Visible",false)}",15f))
+  c.addView(text(if(d.getLong("lastSeen",0L)==0L)"Henüz Passo ekranı analiz edilmedi." else "Ekran öğeleri: ${d.getInt("nodeCount",0)}\nTıklanabilir öğeler: ${d.getInt("clickableCount",0)}\nSon işlem: ${d.getString("stage","Bekleniyor")}\nKoltuk etiketli öğeler: ${d.getInt("seatCandidates",0)}\nGörsel koltuk adayları: ${d.getInt("visualSeatCandidates",0)}\n11. kategori etiketi: ${d.getBoolean("category11Visible",false)}\n10. kategori etiketi: ${d.getBoolean("category10Visible",false)}",15f))
   action(root,"YENİLE"){show("diagnostic")}
   line(root,"Erişilebilirlik ayarları","Hizmeti etkinleştir"){startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))}
  }
