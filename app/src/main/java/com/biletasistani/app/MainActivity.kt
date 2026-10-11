@@ -23,7 +23,6 @@ class MainActivity : Activity() {
  private val prefs by lazy { getSharedPreferences("ticket_config",MODE_PRIVATE) }
  private val selected=mutableListOf<Int>()
  private val events=mutableListOf<String>()
- private var eventField:EditText?=null
  private var priceField:EditText?=null
  private var qtySpinner:Spinner?=null
  private var intervalSpinner:Spinner?=null
@@ -86,9 +85,6 @@ class MainActivity : Activity() {
  }
  private fun startSearch(){
   if(selected.isEmpty()){Toast.makeText(this,"Önce kategori seçmelisin",Toast.LENGTH_LONG).show();show("categories");return}
-  val eventName=eventField?.text?.toString()?.trim().orEmpty().ifBlank { prefs.getString("eventQuery","").orEmpty() }
-  if(eventName.length<4){Toast.makeText(this,"Önce maç veya etkinlik adını yaz",Toast.LENGTH_LONG).show();return}
-  prefs.edit().putString("eventQuery",eventName).apply()
   saveCategories()
   prefs.edit().putBoolean("automationEnabled",true).apply()
   log("Arama başlatıldı; Passo ekranı bekleniyor")
@@ -117,10 +113,6 @@ class MainActivity : Activity() {
   val status=card(root).apply{background=shape(Color.rgb(229,249,239))}
   status.addView(text("✓  Uygulama hazır",19f,true,green))
   status.addView(pad(text("Kategori ekranında bekleniyor • Gerçek sepet seçimi henüz doğrulanmadı",13f,false,green),0,7))
-  title(root,"ARANACAK MAÇ / ETKİNLİK")
-  val eventCard=card(root)
-  eventField=EditText(this).apply{hint="Örn: Beşiktaş Kocaelispor";setSingleLine(true);setText(prefs.getString("eventQuery",""));inputType=android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES}
-  eventCard.addView(eventField)
   line(root,"◎   Seçili kategoriler   ›",if(selected.isEmpty())"Kategori seçilmedi" else selected.joinToString("  →  "){"$it. kategori"}){show("categories")}
   line(root,"▣   Maksimum toplam fiyat   ›","${prefs.getInt("maxPrice",3500)} TL"){show("settings")}
   line(root,"▤   Bilet adedi   ›","${prefs.getInt("quantity",1)} bilet"){show("settings")}

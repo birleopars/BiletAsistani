@@ -38,9 +38,10 @@ class CartWatchService : AccessibilityService() {
  private var lastCategoryRefresh=0L
  private var lastPlusAttempt=0L
  private var footballEntered=false
+ private val eventInspect=Runnable { inspect() }
  private val poll=object:Runnable { override fun run(){
   if(getSharedPreferences("ticket_config",MODE_PRIVATE).getBoolean("automationEnabled",false)) inspect()
-  handler.postDelayed(this,2500L)
+  handler.postDelayed(this,3000L)
  } }
  override fun onServiceConnected(){super.onServiceConnected();handler.removeCallbacks(poll);handler.post(poll)}
  override fun onDestroy(){handler.removeCallbacksAndMessages(null);super.onDestroy()}
@@ -49,7 +50,8 @@ class CartWatchService : AccessibilityService() {
   val pkg=event?.packageName?.toString()?.lowercase(Locale.ROOT)?:return
   val configured=getSharedPreferences("ticket_config",MODE_PRIVATE).getString("passoPackage","")?.lowercase(Locale.ROOT).orEmpty()
   if(pkg!=configured && !pkg.contains("passo"))return
-  handler.postDelayed({ inspect() }, 450)
+  handler.removeCallbacks(eventInspect)
+  handler.postDelayed(eventInspect, 250)
  }
  private fun label(n:AccessibilityNodeInfo)=listOfNotNull(n.text?.toString(),n.contentDescription?.toString()).joinToString(" ").trim()
  private fun gather(n:AccessibilityNodeInfo,out:MutableList<AccessibilityNodeInfo>,depth:Int=0) {
@@ -149,7 +151,7 @@ class CartWatchService : AccessibilityService() {
   if(selected!=null&&selected.groupValues[1].toIntOrNull()==qty){
    pendingSeat=null
    status("Koltuk seçildi, devam ediliyor")
-   nodes.firstOrNull{label(it).equals("Devam Et",true)}?.let{click(it)}
+   nodes.firstOrNull{label(it).equals("Devam Et",true) && it.isEnabled && it.isVisibleToUser}?.let{click(it)}
    return
   }
   if(seatView){
@@ -158,8 +160,8 @@ class CartWatchService : AccessibilityService() {
    if(pendingSeat!=null && System.currentTimeMillis()-pendingSeatTime<2400){status("Koltuk dokunuşunun sonucu bekleniyor");return}
    pendingSeat?.let{rejectedSeats.add(it)}
    pendingSeat=null
-   status("Boş koltuk görüntüden aranıyor")
-   if(qty==1&&System.currentTimeMillis()-lastSeatAttempt>1100){
+   status("Beyaz koltuk adayı görüntüden aranıyor (seçim doğrulanacak)")
+   if(qty==1&&System.currentTimeMillis()-lastSeatAttempt>=3000){
     lastSeatAttempt=System.currentTimeMillis();scanSeatImage(nodes)
    }else if(qty>1)status("Birden fazla bitişik koltuk için görsel seçim desteklenmiyor")
    return
@@ -177,6 +179,7 @@ class CartWatchService : AccessibilityService() {
    }
    val choose=nodes.firstOrNull{label(it).equals("Koltuk Seç",true)&&it.isEnabled&&(it.isClickable||it.parent?.isClickable==true)}
    val now=System.currentTimeMillis()
+   if(blockAttempts.size>100)blockAttempts.clear()
    // Some Passo block pages require ticket quantity to be raised from 0 to 1.
    // Only use an explicitly labeled + control when the quantity is visibly zero.
    val zeroCount=nodes.any{label(it).trim()=="0" && it.isVisibleToUser}
@@ -184,10 +187,11 @@ class CartWatchService : AccessibilityService() {
     val t=label(n).trim().lowercase(tr)
     n.isVisibleToUser && n.isEnabled && (t=="+" || t=="artır" || t=="arttir" || t=="adet artır")
    }
-   if(zeroCount && plus!=null && now-lastPlusAttempt>3000){
+   if(zeroCount && plus!=null && now-lastPlusAttempt>=1500){
     lastPlusAttempt=now
     if(click(plus)){status("Bilet adedi 0 → 1 yapılıyor");return}
    }
+   if(zeroCount){status("Bilet adedi 1 olarak doğrulanmayı bekliyor");return}
    if(choose!=null && selectedBlockKey.isNotEmpty() && now>=blockPendingUntil){
     status("Blok $selectedBlockKey seçildi; koltuk ekranına geçiliyor")
     if(click(choose))blockPendingUntil=now+1800
@@ -260,7 +264,7 @@ class CartWatchService : AccessibilityService() {
      !unavailableRow
     }
    }
-  if(noTickets && now-lastCategoryRefresh>5000L){
+  if(noTickets && now-lastCategoryRefresh>=3000L){
    lastCategoryRefresh=now
    val first=nodes.firstOrNull{Regex("^\\s*1\\s*\\.?\\s*kategori",RegexOption.IGNORE_CASE).containsMatchIn(label(it)) && it.isVisibleToUser}
    if(first!=null){
@@ -268,7 +272,7 @@ class CartWatchService : AccessibilityService() {
     val x=screen.widthPixels*0.5f
     val path=Path().apply{moveTo(x,screen.heightPixels*0.28f);lineTo(x,screen.heightPixels*0.69f)}
     val gesture=GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path,0,480)).build()
-    if(dispatchGesture(gesture,null,null)){lastTap=now;status("Kategori listesi yenileniyor (5 sn)");return}
+    if(dispatchGesture(gesture,null,null)){lastTap=now;status("Kategori listesi yenileniyor (3 sn)");return}
    }
    // Scroll towards the top instead of swiping on an unknown region.
    val scroller=nodes.firstOrNull{it.isScrollable && it.isVisibleToUser && it.actionList.any{a->a.id==AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD}}
@@ -277,7 +281,7 @@ class CartWatchService : AccessibilityService() {
     return
    }
    status("Bilet yok; sayfa yenileme desteklenmiyor")
-  }else if(noTickets)status("Uygun kategori yok; 5 saniyelik kontrol sürüyor")
+  }else if(noTickets)status("Uygun kategori yok; 3 saniyelik kontrol sürüyor")
   // Only press Bilet Al if a category is visibly selected and the price is within budget.
   if(all.contains("toplam")&&all.contains("bilet al")&&all.contains("tam(transfer")){
    val price=Regex("toplam\\s*([\\d.]+),\\d{2}",RegexOption.IGNORE_CASE).find(all)?.groupValues?.get(1)?.replace(".","")?.toIntOrNull()

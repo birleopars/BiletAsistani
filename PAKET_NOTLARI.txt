@@ -1,0 +1,10 @@
+Bilet Asistani - birlesik Android kaynak paketi
+- Futbol bolumune once giris
+- 3 saniyelik kategori/koltuk kontrol dongusu
+- Blok seciminde gereksiz kaydirmadan kacinma
+- Adet 0 ise + kontrolu, 1 dogrulanmadan koltuga gecmeme
+- Koltuk secimini dogrulayarak Devam Et
+- Tekrarlanan erisilebilirlik olaylarini azaltma
+- Guvenlik dogrulamasi ve odemede durma
+NOT: Passo gercek cihaz testi ve APK derlemesi bu ortamda yapilmadi.
+NOT: Ekran kilitliyken koltuk taramasi desteklenmez.
