@@ -36,6 +36,8 @@ class CartWatchService : AccessibilityService() {
  private var searchSubmitted=false
  private var searchSubmittedAt=0L
  private var lastCategoryRefresh=0L
+ private var lastPlusAttempt=0L
+ private var footballEntered=false
  private val poll=object:Runnable { override fun run(){
   if(getSharedPreferences("ticket_config",MODE_PRIVATE).getBoolean("automationEnabled",false)) inspect()
   handler.postDelayed(this,2500L)
@@ -67,7 +69,7 @@ class CartWatchService : AccessibilityService() {
   return false
  }
  private fun tap(x:Float,y:Float):Boolean {
-  if(System.currentTimeMillis()-lastTap<900)return false
+  if(System.currentTimeMillis()-lastTap<450)return false
   val p=Path().apply{moveTo(x,y)}
   val gesture=GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(p,0,95)).build()
   val ok=dispatchGesture(gesture,null,null)
@@ -100,9 +102,18 @@ class CartWatchService : AccessibilityService() {
    if(System.currentTimeMillis()-lastAlert>60000){lastAlert=System.currentTimeMillis();AlarmHelper.alert(this)}
    return
   }
-  if(System.currentTimeMillis()-lastTap<1300)return
+  if(System.currentTimeMillis()-lastTap<600)return
   val seatView=all.contains("saha") && (all.contains("koltuk listesi") || (all.contains("devam et") && all.contains("koltuk")))
   d.edit().putBoolean("seatScreen",seatView).apply()
+  // Passo home: the global search can target shop items instead of football matches.
+  // Enter the Football section first, without touching an editable search field.
+  val passoHome=all.contains("passo'yu keşfet") || (all.contains("şehir seç") && all.contains("tarih seç") && all.contains("futbol"))
+  if(passoHome){
+   val football=nodes.firstOrNull{label(it).equals("Futbol",true) && it.isVisibleToUser && it.isEnabled}
+   if(football!=null){status("Futbol bölümüne geçiliyor");click(football)}
+   else status("Passo ana sayfası: Futbol kutusu bekleniyor")
+   return
+  }
   // Find the explicitly requested event before attempting category selection.
   val eventQuery=cfg.getString("eventQuery","")?.trim().orEmpty()
   if(eventQuery.length>=4 && !seatView && !all.contains("blok seç") && !all.contains("kategori")){
@@ -144,11 +155,11 @@ class CartWatchService : AccessibilityService() {
   if(seatView){
    selectedBlockKey=""
    if(seatScreenSeenAt==0L)seatScreenSeenAt=System.currentTimeMillis()
-   if(pendingSeat!=null && System.currentTimeMillis()-pendingSeatTime<7000){status("Koltuk dokunuşunun sonucu bekleniyor");return}
+   if(pendingSeat!=null && System.currentTimeMillis()-pendingSeatTime<2400){status("Koltuk dokunuşunun sonucu bekleniyor");return}
    pendingSeat?.let{rejectedSeats.add(it)}
    pendingSeat=null
    status("Boş koltuk görüntüden aranıyor")
-   if(qty==1&&System.currentTimeMillis()-lastSeatAttempt>3500){
+   if(qty==1&&System.currentTimeMillis()-lastSeatAttempt>1100){
     lastSeatAttempt=System.currentTimeMillis();scanSeatImage(nodes)
    }else if(qty>1)status("Birden fazla bitişik koltuk için görsel seçim desteklenmiyor")
    return
@@ -166,20 +177,31 @@ class CartWatchService : AccessibilityService() {
    }
    val choose=nodes.firstOrNull{label(it).equals("Koltuk Seç",true)&&it.isEnabled&&(it.isClickable||it.parent?.isClickable==true)}
    val now=System.currentTimeMillis()
+   // Some Passo block pages require ticket quantity to be raised from 0 to 1.
+   // Only use an explicitly labeled + control when the quantity is visibly zero.
+   val zeroCount=nodes.any{label(it).trim()=="0" && it.isVisibleToUser}
+   val plus=nodes.firstOrNull{n ->
+    val t=label(n).trim().lowercase(tr)
+    n.isVisibleToUser && n.isEnabled && (t=="+" || t=="artır" || t=="arttir" || t=="adet artır")
+   }
+   if(zeroCount && plus!=null && now-lastPlusAttempt>3000){
+    lastPlusAttempt=now
+    if(click(plus)){status("Bilet adedi 0 → 1 yapılıyor");return}
+   }
    if(choose!=null && selectedBlockKey.isNotEmpty() && now>=blockPendingUntil){
     status("Blok $selectedBlockKey seçildi; koltuk ekranına geçiliyor")
-    if(click(choose))blockPendingUntil=now+4500
+    if(click(choose))blockPendingUntil=now+1800
     return
    }
    if(now<blockPendingUntil){status("Blok seçimi doğrulanıyor");return}
-   val block=blocks.firstOrNull{now-(blockAttempts[label(it)]?:0L)>18000}
+   val block=blocks.firstOrNull{now-(blockAttempts[label(it)]?:0L)>6000}
    if(block!=null){
     val key=label(block)
     // Select only a visible block; do not retry the same target on every event.
     if(click(block)){
      selectedBlockKey=key
      blockAttempts[key]=now
-     blockPendingUntil=now+1700
+     blockPendingUntil=now+850
      status("Blok $key işaretlendi; buton bekleniyor")
     }
    }else status("Blok listesi veya seçim butonu bekleniyor")
