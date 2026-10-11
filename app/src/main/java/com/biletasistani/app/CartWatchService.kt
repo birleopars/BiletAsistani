@@ -28,6 +28,8 @@ class CartWatchService : AccessibilityService() {
  private var categoryAttempts=mutableMapOf<Int,Long>()
  private var blockAttempts=mutableMapOf<String,Long>()
  private var lastStatus="Bekleniyor"
+ private var searchSubmitted=false
+ private var searchSubmittedAt=0L
  override fun onInterrupt() {}
  override fun onAccessibilityEvent(event:AccessibilityEvent?) {
   val pkg=event?.packageName?.toString()?.lowercase(Locale.ROOT)?:return
@@ -85,6 +87,36 @@ class CartWatchService : AccessibilityService() {
    return
   }
   if(System.currentTimeMillis()-lastTap<1300)return
+  // Find the explicitly requested event before attempting category selection.
+  val eventQuery=cfg.getString("eventQuery","")?.trim().orEmpty()
+  if(eventQuery.length>=4 && !all.contains("koltuk listesi") && !all.contains("blok seç") && !all.contains("kategori")){
+   val tokens=eventQuery.lowercase(tr).split(Regex("\\s+")).filter{it.length>=3}
+   val result=nodes.firstOrNull{ n ->
+    val t=label(n).lowercase(tr)
+    t.isNotBlank() && tokens.isNotEmpty() && tokens.all{t.contains(it)} && n.isEnabled && (n.isClickable || n.parent?.isClickable==true)
+   }
+   if(result!=null){status("İstenen etkinlik açılıyor");click(result);return}
+   val searchInput=nodes.firstOrNull{it.isEditable && it.isEnabled}
+   if(searchInput!=null){
+    val current=searchInput.text?.toString().orEmpty()
+    if(current!=eventQuery){
+     val args=android.os.Bundle().apply{putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,eventQuery)}
+     if(searchInput.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT,args)){
+      searchSubmitted=false;status("Etkinlik adı arama alanına yazıldı");return
+     }
+    }else if(!searchSubmitted || System.currentTimeMillis()-searchSubmittedAt>15000){
+     val search=nodes.firstOrNull{val t=label(it).lowercase(tr);it.isEnabled && (t=="ara" || t=="search" || t.contains("arama yap"))}
+     if(search!=null && click(search)){
+      searchSubmitted=true;searchSubmittedAt=System.currentTimeMillis();status("Etkinlik aranıyor");return
+     }
+    }
+   }else{
+    val search=nodes.firstOrNull{val t=label(it).lowercase(tr);it.isEnabled && (t=="ara" || t=="arama" || t=="search" || t.contains("etkinlik ara"))}
+    if(search!=null){status("Passo arama ekranı açılıyor");click(search);return}
+   }
+   status("Etkinlik arama ekranı bekleniyor: $eventQuery")
+   return
+  }
   val qty=cfg.getInt("quantity",1).coerceIn(1,4)
   val selected=Regex("koltuk listesi\\s*\\(\\s*(\\d+)\\s*/\\s*(\\d+)\\s*\\)",RegexOption.IGNORE_CASE).find(all)
   if(selected!=null&&selected.groupValues[1].toIntOrNull()==qty){
