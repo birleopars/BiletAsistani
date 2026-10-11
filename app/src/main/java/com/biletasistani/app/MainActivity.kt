@@ -88,10 +88,25 @@ class MainActivity : Activity() {
   saveCategories()
   prefs.edit().putBoolean("automationEnabled",true).apply()
   log("Arama başlatıldı; Passo ekranı bekleniyor")
-  val launch=packageManager.getLaunchIntentForPackage("com.aktifbank.passo")
-  if(launch!=null){startActivity(launch)}else{
-   Toast.makeText(this,"Passo uygulamasını açıp kategori ekranına ilerle.",Toast.LENGTH_LONG).show()
-   try{startActivity(Intent(Intent.ACTION_VIEW,Uri.parse("https://www.passo.com.tr")))}catch(_:ActivityNotFoundException){}
+  val launcher=Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+  val apps=packageManager.queryIntentActivities(launcher,0)
+  val match=apps.firstOrNull { info ->
+   val pkg=info.activityInfo.packageName.lowercase(java.util.Locale.ROOT)
+   val name=info.loadLabel(packageManager).toString().lowercase(java.util.Locale.ROOT)
+   pkg.contains("passo") || name == "passo" || name.startsWith("passo ")
+  }
+  if(match!=null){
+   val packageName=match.activityInfo.packageName
+   prefs.edit().putString("passoPackage",packageName).apply()
+   val intent=packageManager.getLaunchIntentForPackage(packageName)
+    ?: Intent(launcher).setClassName(packageName,match.activityInfo.name)
+   try { startActivity(intent) } catch(e:Exception){
+    prefs.edit().putBoolean("automationEnabled",false).apply()
+    Toast.makeText(this,"Passo uygulaması açılamadı: ${e.javaClass.simpleName}",Toast.LENGTH_LONG).show()
+   }
+  }else{
+   prefs.edit().putBoolean("automationEnabled",false).apply()
+   Toast.makeText(this,"Passo uygulaması bulunamadı. Passo'yu yükleyip yeniden deneyin.",Toast.LENGTH_LONG).show()
   }
  }
  private fun home(root:LinearLayout) {

@@ -31,7 +31,8 @@ class CartWatchService : AccessibilityService() {
  override fun onInterrupt() {}
  override fun onAccessibilityEvent(event:AccessibilityEvent?) {
   val pkg=event?.packageName?.toString()?.lowercase(Locale.ROOT)?:return
-  if(!pkg.contains("passo"))return
+  val configured=getSharedPreferences("ticket_config",MODE_PRIVATE).getString("passoPackage","")?.lowercase(Locale.ROOT).orEmpty()
+  if(pkg!=configured && !pkg.contains("passo"))return
   handler.post { inspect() }
  }
  private fun label(n:AccessibilityNodeInfo)=listOfNotNull(n.text?.toString(),n.contentDescription?.toString()).joinToString(" ").trim()
@@ -62,7 +63,9 @@ class CartWatchService : AccessibilityService() {
  private fun status(s:String){lastStatus=s;getSharedPreferences("passo_diagnostic",MODE_PRIVATE).edit().putString("stage",s).apply()}
  private fun inspect(){
   val root=rootInActiveWindow?:return
-  if(!root.packageName.toString().lowercase(Locale.ROOT).contains("passo"))return
+  val active=root.packageName?.toString()?.lowercase(Locale.ROOT).orEmpty()
+  val configured=getSharedPreferences("ticket_config",MODE_PRIVATE).getString("passoPackage","")?.lowercase(Locale.ROOT).orEmpty()
+  if(active!=configured && !active.contains("passo"))return
   val nodes=mutableListOf<AccessibilityNodeInfo>();gather(root,nodes)
   val all=nodes.joinToString(" "){label(it)}.lowercase(tr)
   val d=getSharedPreferences("passo_diagnostic",MODE_PRIVATE)
