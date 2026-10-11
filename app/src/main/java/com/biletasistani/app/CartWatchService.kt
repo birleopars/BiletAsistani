@@ -20,6 +20,18 @@ class CartWatchService : AccessibilityService() {
   val nodes = mutableListOf<AccessibilityNodeInfo>()
   gather(root,nodes,0)
   val all = nodes.joinToString(" ") { label(it) }.lowercase(tr)
+  // Only counts are saved. No screen text, names, ticket IDs or credentials.
+  val seatScreen = all.contains("koltuk listesi") || all.contains("koltuk seç")
+  val seatCandidates = nodes.count { n ->
+   n.isClickable && (label(n).contains("koltuk", true) || label(n).contains("seat", true))
+  }
+  getSharedPreferences("passo_diagnostic", MODE_PRIVATE).edit()
+   .putLong("lastSeen", System.currentTimeMillis())
+   .putInt("nodeCount", nodes.size)
+   .putInt("clickableCount", nodes.count { it.isClickable && it.isEnabled })
+   .putInt("seatCandidates", seatCandidates)
+   .putBoolean("seatScreen", seatScreen)
+   .apply()
   // Stop for security checks and any payment form. No bypass or form filling.
   if (listOf("cloudflare","güvenlik doğrulaması","doğrulanıyor","captcha","kart numarası","cvv","ödeme yap").any { all.contains(it) }) return
   if (listOf("sepete eklendi","ödeme için kalan süre","ödeme süresi","sepetinizdeki bilet").any { all.contains(it) }) {
