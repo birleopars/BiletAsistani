@@ -10,6 +10,8 @@ import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
 import android.view.View
 import android.widget.*
+import android.content.ActivityNotFoundException
+import android.net.Uri
 
 class MainActivity : Activity() {
  private val navy=Color.rgb(13,29,49)
@@ -20,6 +22,7 @@ class MainActivity : Activity() {
  private val muted=Color.rgb(101,114,133)
  private val prefs by lazy { getSharedPreferences("ticket_config",MODE_PRIVATE) }
  private val selected=mutableListOf<Int>()
+ private val events=mutableListOf<String>()
  private var priceField:EditText?=null
  private var qtySpinner:Spinner?=null
  private var intervalSpinner:Spinner?=null
@@ -57,40 +60,60 @@ class MainActivity : Activity() {
   page=target
   val outer=col().apply{setBackgroundColor(bg)}
   setContentView(outer)
-  val head=col().apply{background=shape(navy,0);setPadding(dp(20),dp(18),dp(20),dp(20))}
+  val head=col().apply{setBackgroundColor(navy);setPadding(dp(20),dp(20),dp(20),dp(18))}
   outer.addView(head)
-  head.addView(text(when(target){"home"->"Bilet Asistanı";"categories"->"‹   Kategori Ayarları";"settings"->"‹   Diğer Ayarlar";"diagnostic"->"‹   Ekran Analizi";else->"‹   Hakkında"},24f,true,Color.WHITE).apply{if(target!="home")setOnClickListener{show("home")}})
-  if(target=="home")head.addView(pad(text("PASSO  •  Bilet takip yardımcısı",13f,true,Color.rgb(140,207,255)),0,5))
+  val header=text(when(target){"home"->"Bilet Asistanı";"categories"->"‹   Kategori Ayarları";"settings"->"‹   Diğer Ayarlar";"diagnostic"->"‹   Ekran Analizi";"history"->"‹   Geçmiş Kayıtları";else->"‹   Nasıl Kullanılır?"},24f,true,Color.WHITE)
+  head.addView(header)
+  if(target!="home")header.setOnClickListener{show("home")}
+  if(target=="home")head.addView(pad(text("PASSO",16f,true,Color.rgb(255,83,113)),0,3))
   val scroll=ScrollView(this).apply{isFillViewport=true}
   outer.addView(scroll,LinearLayout.LayoutParams(-1,0,1f))
   val content=col().apply{setPadding(dp(16),dp(18),dp(16),dp(12))}
   scroll.addView(content);main=content
-  when(target){"home"->home(content);"categories"->categories(content);"settings"->settings(content);"diagnostic"->diagnostic(content);else->help(content)}
+  when(target){"home"->home(content);"categories"->categories(content);"settings"->settings(content);"diagnostic"->diagnostic(content);"history"->history(content);else->help(content)}
   val bar=LinearLayout(this).apply{gravity=Gravity.CENTER;background=shape(Color.WHITE,0)}
   outer.addView(bar)
-  listOf("Ana Sayfa" to "home","Kategoriler" to "categories","Ayarlar" to "settings","Analiz" to "diagnostic").forEach{(label,id)->
-   val t=text(label,12f,id==target,if(id==target)blue else muted).apply{gravity=Gravity.CENTER;setPadding(0,dp(17),0,dp(17));setOnClickListener{show(id)}}
+  listOf("⌂\nAna Sayfa" to "home","⚙\nAyarlar" to "settings","◷\nGeçmiş" to "history","?\nYardım" to "help").forEach{(label,id)->
+   val t=text(label,12f,id==target,if(id==target)blue else muted).apply{gravity=Gravity.CENTER;setPadding(0,dp(12),0,dp(12));setOnClickListener{show(id)}}
    bar.addView(t,LinearLayout.LayoutParams(0,-2,1f))
   }
  }
- private fun home(root:LinearLayout) {
-  val status=card(root).apply{background=shape(Color.rgb(231,247,238))}
-  status.addView(text("●  Uygulama hazır",18f,true,green))
-  status.addView(pad(text("Kategori ayarları kaydedilebilir. Gerçek Passo sepeti otomasyonu henüz test aşamasında.",13f,false,ink),0,8))
-  title(root,"BİLET TERCİHLERİ")
-  line(root,"Seçili kategoriler",if(selected.isEmpty())"Kategori seçilmedi" else selected.joinToString("  →  "){"$it. kategori"}){show("categories")}
-  line(root,"Maksimum toplam fiyat","${prefs.getInt("maxPrice",3500)} TL"){show("settings")}
-  line(root,"Bilet adedi","${prefs.getInt("quantity",1)} bilet"){show("settings")}
-  action(root,"KATEGORİLERİ DÜZENLE",green){show("categories")}
-  val auto=Switch(this).apply { text="Passo ekranında otomatik seçim"; isChecked=prefs.getBoolean("automationEnabled",false); setOnCheckedChangeListener{_,checked->prefs.edit().putBoolean("automationEnabled",checked).apply()} }
-  card(root).addView(auto)
-  title(root,"PASSO BAĞLANTISI")
-  line(root,"Erişilebilirlik izni","Android ayarlarından etkinleştir"){startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))}
-  line(root,"Son ekran analizi","Passo ekranının okunabilir öğelerini görüntüle"){show("diagnostic")}
-  title(root,"GELİŞTİRME DURUMU")
-  val c=card(root)
-  c.addView(text("Kategori, blok ve görsel boş koltuk denemesi eklendi. Passo üzerinde gerçek sepet akışı henüz doğrulanmadı. Tek biletlik görsel koltuk seçimi deneyseldir.",14f,false,muted))
+ private fun log(message:String){
+  val stamp=java.text.SimpleDateFormat("HH:mm",java.util.Locale.getDefault()).format(java.util.Date())
+  val old=prefs.getString("activityLog","")?:""
+  prefs.edit().putString("activityLog",("$stamp  $message\n"+old).take(2500)).apply()
  }
+ private fun startSearch(){
+  if(selected.isEmpty()){Toast.makeText(this,"Önce kategori seçmelisin",Toast.LENGTH_LONG).show();show("categories");return}
+  saveCategories()
+  prefs.edit().putBoolean("automationEnabled",true).apply()
+  log("Arama başlatıldı; Passo ekranı bekleniyor")
+  val launch=packageManager.getLaunchIntentForPackage("com.aktifbank.passo")
+  if(launch!=null){startActivity(launch)}else{
+   Toast.makeText(this,"Passo uygulamasını açıp kategori ekranına ilerle.",Toast.LENGTH_LONG).show()
+   try{startActivity(Intent(Intent.ACTION_VIEW,Uri.parse("https://www.passo.com.tr")))}catch(_:ActivityNotFoundException){}
+  }
+ }
+ private fun home(root:LinearLayout) {
+  val status=card(root).apply{background=shape(Color.rgb(229,249,239))}
+  status.addView(text("✓  Uygulama hazır",19f,true,green))
+  status.addView(pad(text("Kategori ekranında bekleniyor • Gerçek sepet seçimi henüz doğrulanmadı",13f,false,green),0,7))
+  line(root,"◎   Seçili kategoriler   ›",if(selected.isEmpty())"Kategori seçilmedi" else selected.joinToString("  →  "){"$it. kategori"}){show("categories")}
+  line(root,"▣   Maksimum toplam fiyat   ›","${prefs.getInt("maxPrice",3500)} TL"){show("settings")}
+  line(root,"▤   Bilet adedi   ›","${prefs.getInt("quantity",1)} bilet"){show("settings")}
+  action(root,"▶   BİLET ARAMAYI BAŞLAT",green){startSearch()}
+  val shortcuts=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL}
+  root.addView(shortcuts)
+  listOf("⌕\nEkran\nAnalizi" to "diagnostic","◷\nGeçmiş\nKayıtları" to "history","♧\nBildirim\nAyarları" to "settings","?\nNasıl\nKullanılır?" to "help").forEach{(label,id)->
+   val tile=text(label,12f,true,navy).apply{gravity=Gravity.CENTER;background=shape(Color.WHITE,13);setPadding(dp(3),dp(13),dp(3),dp(13));setOnClickListener{show(id)}}
+   shortcuts.addView(tile,LinearLayout.LayoutParams(0,dp(88),1f).apply{marginEnd=dp(5)})
+  }
+  title(root,"Son İşlemler")
+  val c=card(root)
+  c.addView(text(prefs.getString("activityLog","Henüz işlem kaydı yok.")?:"Henüz işlem kaydı yok.",13f,false,muted))
+  line(root,"Erişilebilirlik izni   ›","Passo ekranını okuyabilmek için izin gerekir"){startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))}
+ }
+ private fun history(root:LinearLayout){title(root,"SON İŞLEMLER");card(root).addView(text(prefs.getString("activityLog","Henüz işlem kaydı yok.")?:"Henüz işlem kaydı yok.",14f))}
  private fun categories(root:LinearLayout) {
   val tip=card(root).apply{background=shape(Color.rgb(232,242,255))}
   tip.addView(text("Birden fazla kategori seçebilirsin. İşaretleme sırası önceliği belirler.",14f,false,navy))
@@ -126,12 +149,23 @@ class MainActivity : Activity() {
   intervalSpinner=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("5 saniye","10 saniye","30 saniye"));setSelection(prefs.getInt("intervalIndex",1).coerceIn(0,2))};c.addView(intervalSpinner)
   c.addView(text("Bu seçenek şimdilik kayıtlı tercihtir; otomatik tarama başlatmaz.",12f,false,muted))
   val d=card(root);notifications=Switch(this).apply{text="Bildirim tercihi";isChecked=prefs.getBoolean("notify",true)};d.addView(notifications)
+  val autoCard=card(root)
+  val auto=Switch(this).apply{text="Otomatik deneme";isChecked=prefs.getBoolean("automationEnabled",false);setOnCheckedChangeListener{_,v->prefs.edit().putBoolean("automationEnabled",v).apply()}}
+  autoCard.addView(auto)
+  autoCard.addView(text("Seçili kategorileri Passo ekranında denemek için izin gerekir.",12f,false,muted))
   action(root,"AYARLARI KAYDET"){
    val amount=priceField?.text?.toString()?.toIntOrNull()
    if(amount==null || amount<=0){Toast.makeText(this,"Geçerli bir fiyat gir.",Toast.LENGTH_LONG).show()}
-   else{prefs.edit().putInt("maxPrice",amount).putInt("quantity",(qtySpinner?.selectedItemPosition?:0)+1).putInt("intervalIndex",intervalSpinner?.selectedItemPosition?:1).putBoolean("notify",notifications?.isChecked?:true).apply();show("home")}
+   else{log("Bilet ayarları kaydedildi");prefs.edit().putInt("maxPrice",amount).putInt("quantity",(qtySpinner?.selectedItemPosition?:0)+1).putInt("intervalIndex",intervalSpinner?.selectedItemPosition?:1).putBoolean("notify",notifications?.isChecked?:true).apply();show("home")}
   }
-  line(root,"Erişilebilirlik izni","Android ayarlarına git"){startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))}
+  title(root,"UYGULAMA DURUMU")
+  line(root,"Erişilebilirlik izni   ›","Android ayarlarına git"){startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))}
+  line(root,"Passo uygulaması   ›","Passo uygulamasını aç"){startSearch()}
+  val reset=text("↻   AYARLARI SIFIRLA",15f,true,Color.RED).apply{gravity=Gravity.CENTER;background=shape(Color.WHITE,12,Color.RED);setPadding(dp(12),dp(17),dp(12),dp(17));setOnClickListener{
+   android.app.AlertDialog.Builder(this@MainActivity).setTitle("Ayarları sıfırla?").setPositiveButton("Sıfırla"){_,_->prefs.edit().clear().apply();selected.clear();selected.addAll(listOf(11,10));show("home")}.setNegativeButton("Vazgeç",null).show()
+  }}
+  root.addView(reset)
+
  }
  private fun diagnostic(root:LinearLayout){
   title(root,"SON PASSO EKRANI")
@@ -141,6 +175,6 @@ class MainActivity : Activity() {
   action(root,"YENİLE"){show("diagnostic")}
   line(root,"Erişilebilirlik ayarları","Hizmeti etkinleştir"){startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))}
  }
- private fun help(root:LinearLayout){card(root).addView(text("Bu uygulama deneysel bir bilet seçimi yardımcısıdır. Gerçek bilet garantisi vermez."))}
+ private fun help(root:LinearLayout){card(root).addView(text("Önce kategorileri ve bütçeni seç. Bilet aramayı başlat düğmesi arama tercihini açar ve Passo’ya geçmeyi dener. Erişilebilirlik iznini etkinleştir. Gerçek koltuk seçimi ve sepet işlemi deneysel olup doğrulanmamıştır. Güvenlik doğrulaması ve ödeme kullanıcıya aittir."))}
  override fun onBackPressed(){if(page=="home")super.onBackPressed() else show("home")}
 }
