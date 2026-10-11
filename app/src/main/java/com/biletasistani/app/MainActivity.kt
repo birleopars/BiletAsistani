@@ -61,7 +61,7 @@ class MainActivity : Activity() {
   outer.addView(head)
   head.addView(text(when(target){"home"->"Bilet Asistanı";"categories"->"‹   Kategori Ayarları";"settings"->"‹   Diğer Ayarlar";"diagnostic"->"‹   Ekran Analizi";else->"‹   Hakkında"},24f,true,Color.WHITE).apply{if(target!="home")setOnClickListener{show("home")}})
   if(target=="home")head.addView(pad(text("PASSO  •  Bilet takip yardımcısı",13f,true,Color.rgb(140,207,255)),0,5))
-  val scroll=ScrollView(this).apply{fillViewport=true}
+  val scroll=ScrollView(this).apply{isFillViewport=true}
   outer.addView(scroll,LinearLayout.LayoutParams(-1,0,1f))
   val content=col().apply{setPadding(dp(16),dp(18),dp(16),dp(12))}
   scroll.addView(content);main=content
