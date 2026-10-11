@@ -24,6 +24,7 @@ class MainActivity : Activity() {
  private val selected=mutableListOf<Int>()
  private val events=mutableListOf<String>()
  private var priceField:EditText?=null
+ private var teamField:EditText?=null
  private var qtySpinner:Spinner?=null
  private var intervalSpinner:Spinner?=null
  private var notifications:Switch?=null
@@ -86,6 +87,8 @@ class MainActivity : Activity() {
  private fun startSearch(){
   if(selected.isEmpty()){Toast.makeText(this,"Önce kategori seçmelisin",Toast.LENGTH_LONG).show();show("categories");return}
   saveCategories()
+  val team=teamField?.text?.toString()?.trim().orEmpty()
+  if(team.isNotEmpty())prefs.edit().putString("eventQuery",team).apply()
   prefs.edit().putBoolean("automationEnabled",true).apply()
   log("Arama başlatıldı; Passo ekranı bekleniyor")
   val launcher=Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
@@ -113,6 +116,15 @@ class MainActivity : Activity() {
   val status=card(root).apply{background=shape(Color.rgb(229,249,239))}
   status.addView(text("✓  Uygulama hazır",19f,true,green))
   status.addView(pad(text("Kategori ekranında bekleniyor • Gerçek sepet seçimi henüz doğrulanmadı",13f,false,green),0,7))
+  val teamCard=card(root)
+  teamCard.addView(text("Takım / maç araması",15f,true))
+  teamField=EditText(this).apply{
+   setSingleLine(true)
+   hint="Örn. Galatasaray"
+   setText(prefs.getString("eventQuery","Galatasaray") ?: "Galatasaray")
+  }
+  teamCard.addView(teamField)
+  teamCard.addView(text("Başlat'a basınca arama tercihi kaydedilir.",12f,false,muted))
   line(root,"◎   Seçili kategoriler   ›",if(selected.isEmpty())"Kategori seçilmedi" else selected.joinToString("  →  "){"$it. kategori"}){show("categories")}
   line(root,"▣   Maksimum toplam fiyat   ›","${prefs.getInt("maxPrice",3500)} TL"){show("settings")}
   line(root,"▤   Bilet adedi   ›","${prefs.getInt("quantity",1)} bilet"){show("settings")}
@@ -161,8 +173,8 @@ class MainActivity : Activity() {
   qtySpinner=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,(1..4).map{"$it bilet"});setSelection((prefs.getInt("quantity",1)-1).coerceIn(0,3))};b.addView(qtySpinner)
   title(root,"ÇALIŞMA AYARLARI")
   val c=card(root);c.addView(text("Ekran analizi yenileme aralığı",15f,true))
-  intervalSpinner=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("5 saniye","10 saniye","30 saniye"));setSelection(prefs.getInt("intervalIndex",1).coerceIn(0,2))};c.addView(intervalSpinner)
-  c.addView(text("Bu seçenek şimdilik kayıtlı tercihtir; otomatik tarama başlatmaz.",12f,false,muted))
+  intervalSpinner=Spinner(this).apply{adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,listOf("3 saniye","5 saniye","10 saniye"));setSelection(prefs.getInt("intervalIndex",1).coerceIn(0,2))};c.addView(intervalSpinner)
+  c.addView(text("Ekran açık ve Passo öndeyken otomatik kontrol sürer.",12f,false,muted))
   val d=card(root);notifications=Switch(this).apply{text="Bildirim tercihi";isChecked=prefs.getBoolean("notify",true)};d.addView(notifications)
   val autoCard=card(root)
   val auto=Switch(this).apply{text="Otomatik deneme";isChecked=prefs.getBoolean("automationEnabled",false);setOnCheckedChangeListener{_,v->prefs.edit().putBoolean("automationEnabled",v).apply()}}
