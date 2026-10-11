@@ -212,8 +212,8 @@ class CartWatchService : AccessibilityService() {
   if(Build.VERSION.SDK_INT<30||busyScreenshot){status("Ekran görüntüsü API 30+ gerekiyor");return}
   val seatList=nodes.firstOrNull{label(it).contains("Koltuk Listesi",true)}
   val saha=nodes.firstOrNull{label(it).equals("Saha",true)}
-  if(seatList==null||saha==null){status("Koltuk haritası sınırları belirlenemedi");return}
-  val bottom=Rect();seatList.getBoundsInScreen(bottom)
+  if(saha==null){status("Saha etiketi bulunamadı; koltuk alanı belirlenemedi");return}
+  val bottom=Rect();if(seatList!=null)seatList.getBoundsInScreen(bottom) else bottom.set(0,resources.displayMetrics.heightPixels*3/4,resources.displayMetrics.widthPixels,resources.displayMetrics.heightPixels)
   val field=Rect();saha.getBoundsInScreen(field)
   busyScreenshot=true
   try{
@@ -236,52 +236,56 @@ class CartWatchService : AccessibilityService() {
   }catch(e:Exception){busyScreenshot=false;status("Görüntü izni veya erişim hatası")}
  }
  private fun findSeat(bitmap:Bitmap,field:Rect,bottom:Rect){
-  // Conservative image-only seat detection: a bright seat center must sit on a
-  // regular dark-seat grid. Never tap blank page space or unknown UI elements.
+  // Identify bounded bright seat shapes rather than requiring exact grid pitch.
   val w=bitmap.width;val h=bitmap.height
-  val screenW=resources.displayMetrics.widthPixels.coerceAtLeast(1)
-  val screenH=resources.displayMetrics.heightPixels.coerceAtLeast(1)
-  val sx=w.toFloat()/screenW;val sy=h.toFloat()/screenH
-  val left=(w*0.11).toInt().coerceAtLeast(30)
-  val right=(w*0.88).toInt().coerceAtMost(w-30)
-  val top=(h*0.23).toInt().coerceAtLeast(30)
-  val end=(field.top*sy-20).toInt().coerceAtMost((bottom.top*sy-90).toInt()).coerceAtMost(h-30)
-  if(end<=top+70){status("Koltuk alanı belirlenemedi");return}
-  fun rgb(x:Int,y:Int):Int=if(x in 0 until w&&y in 0 until h)bitmap.getPixel(x,y) else Color.GRAY
-  fun bright(x:Int,y:Int):Boolean {val c=rgb(x,y);return Color.red(c)>238&&Color.green(c)>238&&Color.blue(c)>238}
-  fun dark(x:Int,y:Int):Boolean {val c=rgb(x,y);return Color.red(c)<65&&Color.green(c)<65&&Color.blue(c)<65}
-  fun gray(x:Int,y:Int):Boolean {val c=rgb(x,y);val v=Color.red(c);return v in 125..235&&kotlin.math.abs(v-Color.green(c))<20&&kotlin.math.abs(v-Color.blue(c))<20}
+  val sx=w.toFloat()/resources.displayMetrics.widthPixels.coerceAtLeast(1)
+  val sy=h.toFloat()/resources.displayMetrics.heightPixels.coerceAtLeast(1)
+  val left=(w*0.08).toInt().coerceAtLeast(10)
+  val right=(w*0.92).toInt().coerceAtMost(w-11)
+  val top=(h*0.16).toInt().coerceAtLeast(10)
+  val end=(field.top*sy-12).toInt().coerceAtMost((bottom.top*sy-45).toInt()).coerceAtMost(h-11)
+  if(end<=top+35){status("Koltuk tarama alanı bulunamadı");return}
+  fun bright(x:Int,y:Int):Boolean {
+   if(x !in 0 until w||y !in 0 until h)return false
+   val c=bitmap.getPixel(x,y)
+   return Color.red(c)>210&&Color.green(c)>210&&Color.blue(c)>210
+  }
+  fun dark(x:Int,y:Int):Boolean {
+   if(x !in 0 until w||y !in 0 until h)return false
+   val c=bitmap.getPixel(x,y)
+   return Color.red(c)<140&&Color.green(c)<140&&Color.blue(c)<140
+  }
   data class Candidate(val x:Int,val y:Int,val score:Int)
   val candidates=mutableListOf<Candidate>()
-  // Pitch is the distance between centers of adjacent seats, not seat width.
-  for(pitch in 13..31 step 2){
-   val radius=(pitch*0.39).toInt().coerceAtLeast(4)
-   for(y in top+pitch until end-pitch step 3){
-    for(x in left+pitch until right-pitch step 3){
+  // A real vacant seat is a compact white island bounded by darker pixels.
+  // Multiple sizes cover zoomed-in and zoomed-out seating maps.
+  for(radius in listOf(3,4,5,6,8,10,12,15)){
+   for(y in top+radius+3 until end-radius-3 step 3){
+    for(x in left+radius+3 until right-radius-3 step 3){
      if(!bright(x,y))continue
-     if(!bright(x-radius/2,y)||!bright(x+radius/2,y)||!bright(x,y-radius/2)||!bright(x,y+radius/2))continue
-     // The outline distinguishes a vacant white square from white background.
-     val edge=listOf(gray(x-radius,y),gray(x+radius,y),gray(x,y-radius),gray(x,y+radius))
-     if(edge.count{it}<2)continue
-     val neighbors=listOf(dark(x-pitch,y),dark(x+pitch,y),dark(x,y-pitch),dark(x,y+pitch))
-     val count=neighbors.count{it}
-     if(count<2 || !(neighbors[0]||neighbors[1]) || !(neighbors[2]||neighbors[3]))continue
-     // Reject gaps: the bright square must be bounded on at least 2 edges.
-     if(bright(x-radius-2,y)&&bright(x+radius+2,y))continue
-     val point=(x/sx).toInt() to (y/sy).toInt()
-     if(rejectedSeats.any{ kotlin.math.abs(it.first-point.first)<pitch/sx && kotlin.math.abs(it.second-point.second)<pitch/sy })continue
-     val score=count*10+edge.count{it}*3
-     candidates.add(Candidate(x,y,score))
+     val inside=listOf(-radius/2 to 0,radius/2 to 0,0 to -radius/2,0 to radius/2)
+     if(inside.count{(dx,dy)->bright(x+dx,y+dy)}<4)continue
+     val ring=radius+3
+     val edge=listOf(dark(x-ring,y),dark(x+ring,y),dark(x,y-ring),dark(x,y+ring),dark(x-ring,y-ring),dark(x+ring,y-ring),dark(x-ring,y+ring),dark(x+ring,y+ring))
+     val count=edge.count{it}
+     if(count<5)continue
+     val far=radius*3+6
+     // Avoid selecting bright labels or large white background patches.
+     if(bright(x-far,y)&&bright(x+far,y)&&bright(x,y-far)&&bright(x,y+far))continue
+     val px=(x/sx).toInt();val py=(y/sy).toInt()
+     if(rejectedSeats.any{kotlin.math.abs(it.first-px)<24&&kotlin.math.abs(it.second-py)<24})continue
+     candidates.add(Candidate(x,y,count*10+radius))
     }
    }
   }
   val best=candidates.maxByOrNull{it.score}
   getSharedPreferences("passo_diagnostic",MODE_PRIVATE).edit().putInt("visualSeatCandidates",candidates.size).apply()
-  if(best==null){status("Doğrulanabilir boş koltuk bulunamadı; rastgele dokunulmadı");return}
+  if(best==null){status("Beyaz koltuk bulunamadı: görsel aday 0");return}
   val x=(best.x/sx).toInt();val y=(best.y/sy).toInt()
   pendingSeat=x to y;pendingSeatTime=System.currentTimeMillis()
   getSharedPreferences("passo_diagnostic",MODE_PRIVATE).edit().putString("seatCoordinate","$x,$y").apply()
-  status("Beyaz koltuk adayı seçiliyor: $x,$y")
+  status("Beyaz koltuk deneniyor: $x,$y")
   if(!tap(x.toFloat(),y.toFloat())){pendingSeat=null;status("Koltuk dokunuşu gönderilemedi")}
+
  }
 }
