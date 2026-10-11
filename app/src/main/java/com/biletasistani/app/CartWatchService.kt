@@ -49,14 +49,16 @@ class CartWatchService : AccessibilityService() {
   // Never infer white seats from accessibility text: Passo map may be drawn as a canvas.
   if (all.contains("koltuk seç") || all.contains("koltuk listesi")) return
   // Find the category row, not merely a text child. Never tap sold-out rows.
-  val categoryPattern = Regex("""(?:^|\\s)(11|10)\\s*\\.?\\s*kategori\\b|\\bkategori\\s*(11|10)\\b""", RegexOption.IGNORE_CASE)
+  val categoryPattern = Regex("""(?:^|\s)([1-9]|1[0-9]|20)\s*\.?\s*kategori\b|\bkategori\s*([1-9]|1[0-9]|20)\b""", RegexOption.IGNORE_CASE)
   fun rowText(node:AccessibilityNodeInfo):String {
    val items=mutableListOf<AccessibilityNodeInfo>()
    gather(node,items,0)
    return items.joinToString(" ") { label(it) }.lowercase(tr)
   }
   val unavailable=listOf("şu anda uygun bilet bulunmamaktadır", "bilet bulunmamaktadır", "tükendi", "sold out")
-  for (category in listOf("11","10")) {
+  val settings=getSharedPreferences("ticket_config",MODE_PRIVATE)
+  val priorities=(settings.getString("categories","11,10") ?: "11,10").split(",").mapNotNull { it.toIntOrNull() }.filter { it in 1..20 }
+  for (category in priorities.map { it.toString() }) {
    val matches=nodes.filter { n ->
     val match=categoryPattern.find(label(n).lowercase(tr))
     match!=null && (match.groups[1]?.value==category || match.groups[2]?.value==category)
