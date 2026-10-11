@@ -25,9 +25,14 @@ class CartWatchService : AccessibilityService() {
  private var lastSeatAttempt=0L
  private var pendingSeat:Pair<Int,Int>?=null
  private var pendingSeatTime=0L
+ private val rejectedSeats=mutableListOf<Pair<Int,Int>>()
+ private var seatScreenSeenAt=0L
  private var categoryAttempts=mutableMapOf<Int,Long>()
  private var blockAttempts=mutableMapOf<String,Long>()
  private var lastStatus="Bekleniyor"
+ private var lastInspectAt=0L
+ private var blockPendingUntil=0L
+ private var selectedBlockKey=""
  private var searchSubmitted=false
  private var searchSubmittedAt=0L
  override fun onInterrupt() {}
@@ -35,7 +40,8 @@ class CartWatchService : AccessibilityService() {
   val pkg=event?.packageName?.toString()?.lowercase(Locale.ROOT)?:return
   val configured=getSharedPreferences("ticket_config",MODE_PRIVATE).getString("passoPackage","")?.lowercase(Locale.ROOT).orEmpty()
   if(pkg!=configured && !pkg.contains("passo"))return
-  handler.post { inspect() }
+  handler.removeCallbacksAndMessages(null)
+  handler.postDelayed({ inspect() }, 450)
  }
  private fun label(n:AccessibilityNodeInfo)=listOfNotNull(n.text?.toString(),n.contentDescription?.toString()).joinToString(" ").trim()
  private fun gather(n:AccessibilityNodeInfo,out:MutableList<AccessibilityNodeInfo>,depth:Int=0) {
@@ -64,6 +70,8 @@ class CartWatchService : AccessibilityService() {
  }
  private fun status(s:String){lastStatus=s;getSharedPreferences("passo_diagnostic",MODE_PRIVATE).edit().putString("stage",s).apply()}
  private fun inspect(){
+  if(System.currentTimeMillis()-lastInspectAt<650)return
+  lastInspectAt=System.currentTimeMillis()
   val root=rootInActiveWindow?:return
   val active=root.packageName?.toString()?.lowercase(Locale.ROOT).orEmpty()
   val configured=getSharedPreferences("ticket_config",MODE_PRIVATE).getString("passoPackage","")?.lowercase(Locale.ROOT).orEmpty()
@@ -72,7 +80,7 @@ class CartWatchService : AccessibilityService() {
   val all=nodes.joinToString(" "){label(it)}.lowercase(tr)
   val d=getSharedPreferences("passo_diagnostic",MODE_PRIVATE)
   d.edit().putLong("lastSeen",System.currentTimeMillis()).putInt("nodeCount",nodes.size)
-   .putInt("clickableCount",nodes.count{it.isEnabled&&it.isClickable})
+   .putInt("clickableCount",nodes.count{it.isEnabled&&(it.isClickable||it.parent?.isClickable==true)})
    .putInt("seatCandidates",nodes.count{label(it).contains("koltuk",true)&&it.isClickable})
    .putBoolean("seatScreen",all.contains("koltuk listesi"))
    .putBoolean("category11Visible",Regex("11\\s*\\.?\\s*kategori").containsMatchIn(all))
@@ -126,7 +134,10 @@ class CartWatchService : AccessibilityService() {
    return
   }
   if(all.contains("koltuk listesi")&&all.contains("saha")){
+   selectedBlockKey=""
+   if(seatScreenSeenAt==0L)seatScreenSeenAt=System.currentTimeMillis()
    if(pendingSeat!=null && System.currentTimeMillis()-pendingSeatTime<7000){status("Koltuk dokunuşunun sonucu bekleniyor");return}
+   pendingSeat?.let{rejectedSeats.add(it)}
    pendingSeat=null
    status("Boş koltuk görüntüden aranıyor")
    if(qty==1&&System.currentTimeMillis()-lastSeatAttempt>3500){
@@ -134,22 +145,36 @@ class CartWatchService : AccessibilityService() {
    }else if(qty>1)status("Birden fazla bitişik koltuk için görsel seçim desteklenmiyor")
    return
   }
+  seatScreenSeenAt=0L
+  rejectedSeats.clear()
   // Passo category -> block -> seat map progression, only on recognizable pages.
-  if(all.contains("blok seç")&&all.contains("koltuk seç")){
-   val block=nodes.firstOrNull{Regex("^\\d{2,4}$").matches(label(it))&&it.isEnabled}
+  if(all.contains("blok seç")){
+   // Wait for the asynchronous block list. Never click an empty area or scroll blindly.
+   val blocks=nodes.filter { n ->
+    Regex("^\\d{2,4}$").matches(label(n)) && n.isEnabled && n.isVisibleToUser
+   }.filter { n ->
+    val r=Rect();n.getBoundsInScreen(r)
+    r.width()>0 && r.height()>0 && r.centerY()>0 && r.centerY()<resources.displayMetrics.heightPixels*0.80
+   }
+   val choose=nodes.firstOrNull{label(it).equals("Koltuk Seç",true)&&it.isEnabled&&(it.isClickable||it.parent?.isClickable==true)}
+   val now=System.currentTimeMillis()
+   if(choose!=null && selectedBlockKey.isNotEmpty() && now>=blockPendingUntil){
+    status("Blok $selectedBlockKey seçildi; koltuk ekranına geçiliyor")
+    if(click(choose))blockPendingUntil=now+4500
+    return
+   }
+   if(now<blockPendingUntil){status("Blok seçimi doğrulanıyor");return}
+   val block=blocks.firstOrNull{now-(blockAttempts[label(it)]?:0L)>18000}
    if(block!=null){
     val key=label(block)
-    if(System.currentTimeMillis()-(blockAttempts[key]?:0L)>12000){
-     blockAttempts[key]=System.currentTimeMillis();status("Blok $key seçiliyor");click(block);return
+    // Select only a visible block; do not retry the same target on every event.
+    if(click(block)){
+     selectedBlockKey=key
+     blockAttempts[key]=now
+     blockPendingUntil=now+1700
+     status("Blok $key işaretlendi; buton bekleniyor")
     }
-   }
-   val button=nodes.firstOrNull{label(it).equals("Koltuk Seç",true)&&it.isEnabled}
-   if(button!=null){status("Koltuk haritasına geçiliyor");click(button)}
-   return
-  }
-  if(all.contains("blok seç")&&all.contains("oturma planı")){
-   val block=nodes.firstOrNull{Regex("^\\d{2,4}$").matches(label(it))&&it.isEnabled}
-   if(block!=null){status("Blok ${label(block)} seçiliyor");click(block)}
+   }else status("Blok listesi veya seçim butonu bekleniyor")
    return
   }
   val categories=cfg.getString("categories","11,10")!!.split(",").mapNotNull{it.toIntOrNull()}.filter{it in 1..20}
@@ -211,53 +236,52 @@ class CartWatchService : AccessibilityService() {
   }catch(e:Exception){busyScreenshot=false;status("Görüntü izni veya erişim hatası")}
  }
  private fun findSeat(bitmap:Bitmap,field:Rect,bottom:Rect){
-  // Detect compact, white, bordered square seats. Ignore the white page background.
+  // Conservative image-only seat detection: a bright seat center must sit on a
+  // regular dark-seat grid. Never tap blank page space or unknown UI elements.
   val w=bitmap.width;val h=bitmap.height
-  val left=(w*0.10).toInt().coerceAtLeast(14)
-  val right=(w*0.90).toInt().coerceAtMost(w-14)
-  val top=(h*0.20).toInt().coerceAtLeast(14)
-  val end=(field.top-25).coerceAtMost(bottom.top-80).coerceAtMost(h-14)
-  if(end<=top+60){status("Koltuk alanı belirlenemedi");return}
-  fun white(x:Int,y:Int):Boolean {
-   if(x !in 0 until w || y !in 0 until h)return false
-   val c=bitmap.getPixel(x,y)
-   return Color.red(c)>225 && Color.green(c)>225 && Color.blue(c)>225
-  }
-  fun black(x:Int,y:Int):Boolean {
-   if(x !in 0 until w || y !in 0 until h)return false
-   val c=bitmap.getPixel(x,y)
-   return Color.red(c)<85 && Color.green(c)<85 && Color.blue(c)<85
-  }
-  // Seat widths vary with device resolution and map zoom. Try a range of scales.
-  val scales=listOf(6,8,10,12,15,18,22)
-  var candidates=0
-  for(size in scales){
-   for(y in top+size until end-size step 3){
-    for(x in left+size until right-size step 3){
-     if(!white(x,y))continue
-     val half=size/2
-     // The candidate must be a coherent bright square, not a tiny gap in the black grid.
-     val inner=listOf(-half/2 to -half/2,half/2 to -half/2,-half/2 to half/2,half/2 to half/2)
-     if(inner.count{(dx,dy)->white(x+dx,y+dy)}<3)continue
-     // Dark occupied seats to the left or right, and above or below.
-     val offsets=listOf(size+3,size+5,size+8)
-     val horizontal=offsets.any{black(x-it,y)||black(x+it,y)}
-     val vertical=offsets.any{black(x,y-it)||black(x,y+it)}
-     if(!horizontal||!vertical)continue
-     // Reject broad blank patches: white cannot extend far beyond the seat.
-     if(white(x-size-3,y)&&white(x+size+3,y))continue
-     if(white(x,y-size-3)&&white(x,y+size+3))continue
-     candidates++
-     val d=getSharedPreferences("passo_diagnostic",MODE_PRIVATE)
-     d.edit().putInt("visualSeatCandidates",candidates).putString("seatCoordinate","$x,$y").apply()
-     pendingSeat=x to y;pendingSeatTime=System.currentTimeMillis()
-     status("Boş koltuk adayı seçiliyor: $x,$y")
-     if(!tap(x.toFloat(),y.toFloat())){pendingSeat=null;status("Koltuk dokunuşu gönderilemedi")}
-     return
+  val screenW=resources.displayMetrics.widthPixels.coerceAtLeast(1)
+  val screenH=resources.displayMetrics.heightPixels.coerceAtLeast(1)
+  val sx=w.toFloat()/screenW;val sy=h.toFloat()/screenH
+  val left=(w*0.11).toInt().coerceAtLeast(30)
+  val right=(w*0.88).toInt().coerceAtMost(w-30)
+  val top=(h*0.23).toInt().coerceAtLeast(30)
+  val end=(field.top*sy-20).toInt().coerceAtMost((bottom.top*sy-90).toInt()).coerceAtMost(h-30)
+  if(end<=top+70){status("Koltuk alanı belirlenemedi");return}
+  fun rgb(x:Int,y:Int):Int=if(x in 0 until w&&y in 0 until h)bitmap.getPixel(x,y) else Color.GRAY
+  fun bright(x:Int,y:Int):Boolean {val c=rgb(x,y);return Color.red(c)>238&&Color.green(c)>238&&Color.blue(c)>238}
+  fun dark(x:Int,y:Int):Boolean {val c=rgb(x,y);return Color.red(c)<65&&Color.green(c)<65&&Color.blue(c)<65}
+  fun gray(x:Int,y:Int):Boolean {val c=rgb(x,y);val v=Color.red(c);return v in 125..235&&kotlin.math.abs(v-Color.green(c))<20&&kotlin.math.abs(v-Color.blue(c))<20}
+  data class Candidate(val x:Int,val y:Int,val score:Int)
+  val candidates=mutableListOf<Candidate>()
+  // Pitch is the distance between centers of adjacent seats, not seat width.
+  for(pitch in 13..31 step 2){
+   val radius=(pitch*0.39).toInt().coerceAtLeast(4)
+   for(y in top+pitch until end-pitch step 3){
+    for(x in left+pitch until right-pitch step 3){
+     if(!bright(x,y))continue
+     if(!bright(x-radius/2,y)||!bright(x+radius/2,y)||!bright(x,y-radius/2)||!bright(x,y+radius/2))continue
+     // The outline distinguishes a vacant white square from white background.
+     val edge=listOf(gray(x-radius,y),gray(x+radius,y),gray(x,y-radius),gray(x,y+radius))
+     if(edge.count{it}<2)continue
+     val neighbors=listOf(dark(x-pitch,y),dark(x+pitch,y),dark(x,y-pitch),dark(x,y+pitch))
+     val count=neighbors.count{it}
+     if(count<2 || !(neighbors[0]||neighbors[1]) || !(neighbors[2]||neighbors[3]))continue
+     // Reject gaps: the bright square must be bounded on at least 2 edges.
+     if(bright(x-radius-2,y)&&bright(x+radius+2,y))continue
+     val point=(x/sx).toInt() to (y/sy).toInt()
+     if(rejectedSeats.any{ kotlin.math.abs(it.first-point.first)<pitch/sx && kotlin.math.abs(it.second-point.second)<pitch/sy })continue
+     val score=count*10+edge.count{it}*3
+     candidates.add(Candidate(x,y,score))
     }
    }
   }
-  getSharedPreferences("passo_diagnostic",MODE_PRIVATE).edit().putInt("visualSeatCandidates",0).apply()
-  status("Görselde doğrulanabilir boş koltuk bulunamadı; rastgele dokunulmadı")
+  val best=candidates.maxByOrNull{it.score}
+  getSharedPreferences("passo_diagnostic",MODE_PRIVATE).edit().putInt("visualSeatCandidates",candidates.size).apply()
+  if(best==null){status("Doğrulanabilir boş koltuk bulunamadı; rastgele dokunulmadı");return}
+  val x=(best.x/sx).toInt();val y=(best.y/sy).toInt()
+  pendingSeat=x to y;pendingSeatTime=System.currentTimeMillis()
+  getSharedPreferences("passo_diagnostic",MODE_PRIVATE).edit().putString("seatCoordinate","$x,$y").apply()
+  status("Beyaz koltuk adayı seçiliyor: $x,$y")
+  if(!tap(x.toFloat(),y.toFloat())){pendingSeat=null;status("Koltuk dokunuşu gönderilemedi")}
  }
 }
