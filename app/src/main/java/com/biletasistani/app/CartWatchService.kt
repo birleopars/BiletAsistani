@@ -20,17 +20,16 @@ class CartWatchService : AccessibilityService() {
   val nodes = mutableListOf<AccessibilityNodeInfo>()
   gather(root,nodes,0)
   val all = nodes.joinToString(" ") { label(it) }.lowercase(tr)
-  // Only counts are saved. No screen text, names, ticket IDs or credentials.
-  val seatScreen = all.contains("koltuk listesi") || all.contains("koltuk seç")
-  val seatCandidates = nodes.count { n ->
-   n.isClickable && (label(n).contains("koltuk", true) || label(n).contains("seat", true))
-  }
+  val cat11=all.contains("11. kategori") || all.contains("11.kategori")
+  val cat10=all.contains("10. kategori") || all.contains("10.kategori")
   getSharedPreferences("passo_diagnostic", MODE_PRIVATE).edit()
    .putLong("lastSeen", System.currentTimeMillis())
    .putInt("nodeCount", nodes.size)
-   .putInt("clickableCount", nodes.count { it.isClickable && it.isEnabled })
-   .putInt("seatCandidates", seatCandidates)
-   .putBoolean("seatScreen", seatScreen)
+   .putInt("clickableCount", nodes.count { it.isEnabled && it.isClickable })
+   .putInt("seatCandidates", nodes.count { it.isClickable && label(it).contains("koltuk",true) })
+   .putBoolean("seatScreen", all.contains("koltuk listesi"))
+   .putBoolean("category11Visible",cat11)
+   .putBoolean("category10Visible",cat10)
    .apply()
   // Stop for security checks and any payment form. No bypass or form filling.
   if (listOf("cloudflare","güvenlik doğrulaması","doğrulanıyor","captcha","kart numarası","cvv","ödeme yap").any { all.contains(it) }) return
@@ -49,16 +48,41 @@ class CartWatchService : AccessibilityService() {
   }
   // Never infer white seats from accessibility text: Passo map may be drawn as a canvas.
   if (all.contains("koltuk seç") || all.contains("koltuk listesi")) return
-  // Category selection only when accessibility exposes a distinct enabled control.
-  val category11=Regex("""(?i)(?:11\s*\.?\s*kategori|kategori\s*11)""")
-  val category10=Regex("""(?i)(?:10\s*\.?\s*kategori|kategori\s*10)""")
-  val first=clickables.firstOrNull { category11.containsMatchIn(label(it)) }
-  val second=clickables.firstOrNull { category10.containsMatchIn(label(it)) }
-  val selected=first ?: second ?: return
-  val signature=(event.windowId.toString()+":"+label(selected)+":"+all.take(120))
-  if (signature==lastSignature && now-lastAction<15000) return
-  lastSignature=signature; lastCategory=label(selected); lastAction=now
-  selected.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+  // Find the category row, not merely a text child. Never tap sold-out rows.
+  val categoryPattern = Regex("""(?:^|\\s)(11|10)\\s*\\.?\\s*kategori\\b|\\bkategori\\s*(11|10)\\b""", RegexOption.IGNORE_CASE)
+  fun rowText(node:AccessibilityNodeInfo):String {
+   val items=mutableListOf<AccessibilityNodeInfo>()
+   gather(node,items,0)
+   return items.joinToString(" ") { label(it) }.lowercase(tr)
+  }
+  val unavailable=listOf("şu anda uygun bilet bulunmamaktadır", "bilet bulunmamaktadır", "tükendi", "sold out")
+  for (category in listOf("11","10")) {
+   val matches=nodes.filter { n ->
+    val match=categoryPattern.find(label(n).lowercase(tr))
+    match!=null && (match.groups[1]?.value==category || match.groups[2]?.value==category)
+   }
+   for (node in matches) {
+    var ancestor:AccessibilityNodeInfo?=node
+    var target:AccessibilityNodeInfo?=null
+    var depth=0
+    while (ancestor!=null && depth<5) {
+     val text=rowText(ancestor)
+     if (unavailable.any { text.contains(it) }) break
+     if (ancestor.isEnabled && ancestor.isClickable) { target=ancestor; break }
+     ancestor=ancestor.parent
+     depth++
+    }
+    if (target!=null) {
+     val signature="$category:${event.windowId}:${label(target)}"
+     if (signature==lastSignature && now-lastAction<15000) return
+     lastSignature=signature
+     lastAction=now
+     target.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+     return
+    }
+   }
+  }
+
  }
  private fun label(n:AccessibilityNodeInfo):String = listOfNotNull(n.text?.toString(),n.contentDescription?.toString()).joinToString(" ")
  private fun gather(n:AccessibilityNodeInfo,out:MutableList<AccessibilityNodeInfo>,depth:Int) {

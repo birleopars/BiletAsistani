@@ -34,12 +34,17 @@ class MainActivity : Activity() {
     else { val (category,block,seat)=found; result.text="TEST SEPETİNE EKLENDİ ✓\nKategori: ${category.number}\nBlok: ${block.name}\nKoltuk: $seat\nTutar: ${category.price} TL\nBu gerçek bilet değildir.";AlarmHelper.alert(this,true) }
    },700)
   }
-  val diagnostic=label("Passo ekran analizi: Henüz veri yok.",15f)
+  val diagnostic=label("Passo analizi: Henüz kontrol edilmedi.",15f)
   button("PASSO EKRAN ANALİZİNİ GÖSTER") {
    val prefs=getSharedPreferences("passo_diagnostic", MODE_PRIVATE)
-   val time=prefs.getLong("lastSeen",0L)
-   diagnostic.text=if(time==0L) "Henüz Passo ekranı okunmadı. İzni açıp Passo ekranını ziyaret edin, sonra buraya dönün."
-   else "Son okuma: ${java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale("tr","TR")).format(java.util.Date(time))}\\nEkran öğeleri: ${prefs.getInt("nodeCount",0)}\\nTıklanabilir öğeler: ${prefs.getInt("clickableCount",0)}\\nKoltuk etiketli öğeler: ${prefs.getInt("seatCandidates",0)}\\nKoltuk ekranı algılandı: ${if(prefs.getBoolean("seatScreen",false)) "Evet" else "Hayır"}\\nBu sayılar koltuk seçiminin çalıştığını kanıtlamaz."
+   diagnostic.text=if(prefs.getLong("lastSeen",0L)==0L) "Henüz Passo verisi okunmadı."
+   else listOf(
+    "Ekran öğeleri: ${prefs.getInt("nodeCount",0)}",
+    "Tıklanabilir: ${prefs.getInt("clickableCount",0)}",
+    "11. kategori etiketi: ${prefs.getBoolean("category11Visible",false)}",
+    "10. kategori etiketi: ${prefs.getBoolean("category10Visible",false)}",
+    "Koltuk etiketli: ${prefs.getInt("seatCandidates",0)}"
+   ).joinToString("\\n")
   }
   button("PASSO ERİŞİLEBİLİRLİK İZNİ") { startActivity(android.content.Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
   button("BİLDİRİM İZNİ VER") { if(Build.VERSION.SDK_INT>=33) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS),101) }
