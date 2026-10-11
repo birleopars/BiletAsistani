@@ -35,17 +35,23 @@ class CartWatchService : AccessibilityService() {
  private var selectedBlockKey=""
  private var searchSubmitted=false
  private var searchSubmittedAt=0L
+ private var lastCategoryRefresh=0L
+ private val poll=object:Runnable { override fun run(){
+  if(getSharedPreferences("ticket_config",MODE_PRIVATE).getBoolean("automationEnabled",false)) inspect()
+  handler.postDelayed(this,2500L)
+ } }
+ override fun onServiceConnected(){super.onServiceConnected();handler.removeCallbacks(poll);handler.post(poll)}
+ override fun onDestroy(){handler.removeCallbacksAndMessages(null);super.onDestroy()}
  override fun onInterrupt() {}
  override fun onAccessibilityEvent(event:AccessibilityEvent?) {
   val pkg=event?.packageName?.toString()?.lowercase(Locale.ROOT)?:return
   val configured=getSharedPreferences("ticket_config",MODE_PRIVATE).getString("passoPackage","")?.lowercase(Locale.ROOT).orEmpty()
   if(pkg!=configured && !pkg.contains("passo"))return
-  handler.removeCallbacksAndMessages(null)
   handler.postDelayed({ inspect() }, 450)
  }
  private fun label(n:AccessibilityNodeInfo)=listOfNotNull(n.text?.toString(),n.contentDescription?.toString()).joinToString(" ").trim()
  private fun gather(n:AccessibilityNodeInfo,out:MutableList<AccessibilityNodeInfo>,depth:Int=0) {
-  if(depth>25||out.size>=900)return
+  if(depth>35||out.size>=2500)return
   out.add(n)
   for(i in 0 until n.childCount)n.getChild(i)?.let{gather(it,out,depth+1)}
  }
@@ -95,9 +101,11 @@ class CartWatchService : AccessibilityService() {
    return
   }
   if(System.currentTimeMillis()-lastTap<1300)return
+  val seatView=all.contains("saha") && (all.contains("koltuk listesi") || (all.contains("devam et") && all.contains("koltuk")))
+  d.edit().putBoolean("seatScreen",seatView).apply()
   // Find the explicitly requested event before attempting category selection.
   val eventQuery=cfg.getString("eventQuery","")?.trim().orEmpty()
-  if(eventQuery.length>=4 && !all.contains("koltuk listesi") && !all.contains("blok seç") && !all.contains("kategori")){
+  if(eventQuery.length>=4 && !seatView && !all.contains("blok seç") && !all.contains("kategori")){
    val tokens=eventQuery.lowercase(tr).split(Regex("\\s+")).filter{it.length>=3}
    val result=nodes.firstOrNull{ n ->
     val t=label(n).lowercase(tr)
@@ -133,7 +141,7 @@ class CartWatchService : AccessibilityService() {
    nodes.firstOrNull{label(it).equals("Devam Et",true)}?.let{click(it)}
    return
   }
-  if(all.contains("koltuk listesi")&&all.contains("saha")){
+  if(seatView){
    selectedBlockKey=""
    if(seatScreenSeenAt==0L)seatScreenSeenAt=System.currentTimeMillis()
    if(pendingSeat!=null && System.currentTimeMillis()-pendingSeatTime<7000){status("Koltuk dokunuşunun sonucu bekleniyor");return}
@@ -177,6 +185,9 @@ class CartWatchService : AccessibilityService() {
    }else status("Blok listesi veya seçim butonu bekleniyor")
    return
   }
+  // Category actions are only permitted on a recognizable category-selection page.
+  val categoryPage=all.contains("kategori") && all.contains("bilet al") && !all.contains("blok seç")
+  if(!categoryPage){status("Kategori sayfası bekleniyor; bilinmeyen ekrana dokunulmadı");return}
   val categories=cfg.getString("categories","11,10")!!.split(",").mapNotNull{it.toIntOrNull()}.filter{it in 1..20}
   val unavailable=listOf("şu anda uygun bilet bulunmamaktadır","tükendi","sold out")
   val maxPrice=cfg.getInt("maxPrice",3500)
@@ -189,10 +200,17 @@ class CartWatchService : AccessibilityService() {
     if(row==null)break
     val children=mutableListOf<AccessibilityNodeInfo>();gather(row,children)
     val txt=children.joinToString(" "){label(it)}.lowercase(tr)
-    if(txt.contains("tl")||txt.contains("₺")||unavailable.any{txt.contains(it)}){rowText=txt;break}
+    if(txt.contains("tl")||txt.contains("₺")||unavailable.any{txt.contains(it)}){
+     rowText=txt
+     if(unavailable.any{txt.contains(it)})break
+     // The price and availability can be in different descendants of the same card.
+     if(txt.contains("kategori") && (txt.contains("tl")||txt.contains("₺")))break
+    }
     row=row.parent
    }
    if(unavailable.any{rowText.contains(it)})continue
+   // Do not tap an unavailable/disabled category, even if its text node is enabled.
+   if(!n.isVisibleToUser)continue
    val price=Regex("([\\d.]+),\\d{2}\\s*(?:tl|₺)",RegexOption.IGNORE_CASE).find(rowText)?.groupValues?.get(1)?.replace(".","")?.toIntOrNull()
    if(price!=null&&price*qty>maxPrice)continue
    if(System.currentTimeMillis()-(categoryAttempts[cat]?:0L)<12000)continue
@@ -200,6 +218,44 @@ class CartWatchService : AccessibilityService() {
    status("$cat. kategori deneniyor")
    if(click(n))return
   }
+  // Check again periodically even when Passo emits no accessibility events.
+  // Refresh only when the category list is at its top and every visible row is unavailable.
+  val now=System.currentTimeMillis()
+  val noTickets=all.contains("şu anda uygun bilet bulunmamaktadır") &&
+   categories.none { cat ->
+    val re=Regex("(?:^|\\s)$cat\\s*\\.?\\s*kategori",RegexOption.IGNORE_CASE)
+    val match=nodes.firstOrNull{re.containsMatchIn(label(it))}
+    if(match==null) false else {
+     var ancestor:AccessibilityNodeInfo?=match
+     var unavailableRow=false
+     for(i in 0..4){
+      val a=ancestor?:break
+      val subset=mutableListOf<AccessibilityNodeInfo>();gather(a,subset)
+      val t=subset.joinToString(" "){label(it)}.lowercase(tr)
+      if(t.contains("şu anda uygun bilet bulunmamaktadır")){unavailableRow=true;break}
+      ancestor=a.parent
+     }
+     !unavailableRow
+    }
+   }
+  if(noTickets && now-lastCategoryRefresh>5000L){
+   lastCategoryRefresh=now
+   val first=nodes.firstOrNull{Regex("^\\s*1\\s*\\.?\\s*kategori",RegexOption.IGNORE_CASE).containsMatchIn(label(it)) && it.isVisibleToUser}
+   if(first!=null){
+    val screen=resources.displayMetrics
+    val x=screen.widthPixels*0.5f
+    val path=Path().apply{moveTo(x,screen.heightPixels*0.28f);lineTo(x,screen.heightPixels*0.69f)}
+    val gesture=GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path,0,480)).build()
+    if(dispatchGesture(gesture,null,null)){lastTap=now;status("Kategori listesi yenileniyor (5 sn)");return}
+   }
+   // Scroll towards the top instead of swiping on an unknown region.
+   val scroller=nodes.firstOrNull{it.isScrollable && it.isVisibleToUser && it.actionList.any{a->a.id==AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD}}
+   if(scroller!=null && scroller.performAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)){
+    status("Kategori listesi başına gidiliyor; sonraki kontrol bekleniyor")
+    return
+   }
+   status("Bilet yok; sayfa yenileme desteklenmiyor")
+  }else if(noTickets)status("Uygun kategori yok; 5 saniyelik kontrol sürüyor")
   // Only press Bilet Al if a category is visibly selected and the price is within budget.
   if(all.contains("toplam")&&all.contains("bilet al")&&all.contains("tam(transfer")){
    val price=Regex("toplam\\s*([\\d.]+),\\d{2}",RegexOption.IGNORE_CASE).find(all)?.groupValues?.get(1)?.replace(".","")?.toIntOrNull()
